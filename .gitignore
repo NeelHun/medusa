@@ -27,6 +27,7 @@ dist/**
 **/stats
 .favorites.json
 .vscode
+*.iml
 
 **/tsconfig.tsbuildinfo
 
