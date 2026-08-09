@@ -21,6 +21,17 @@ const customFulfillmentProviderCalculated = {
   id: "test-provider-calculated",
 }
 
+const customPendingAuthPaymentProvider = {
+  resolve: require("./dist/utils/providers/payment-pending-authorization")
+    .default,
+  id: "pending-auth",
+}
+
+const customTaxDataProvider = {
+  resolve: require("./dist/utils/providers/tax-data-provider").default,
+  id: "data-provider",
+}
+
 // A second instance of the built-in system payment provider, registered under a
 // distinct id (`pp_system_default_2`) so tests can assert a non-default provider
 // is honored. The always-present `pp_system_default` is unaffected.
@@ -31,11 +42,25 @@ const customPaymentProvider = {
   id: "default_2",
 }
 
+const customPaymentProviderAccountHolder = {
+  resolve: require("./dist/utils/providers/payment-account-holder").default,
+  id: "test",
+}
+
 const modules = {
+  [Modules.TAX]: {
+    resolve: "@medusajs/tax",
+    options: {
+      providers: [customTaxDataProvider],
+    },
+  },
   [Modules.PAYMENT]: {
     resolve: "@medusajs/payment",
+    /** @type {import('@medusajs/payment').PaymentModuleOptions} */
     options: {
-      providers: [customPaymentProvider],
+      providers: [customPaymentProvider, customPaymentProviderAccountHolder, customPendingAuthPaymentProvider],
+      webhook_delay: 0,
+      webhook_retries: 0,
     },
   },
   [Modules.FULFILLMENT]: {
@@ -82,9 +107,37 @@ const modules = {
     resolve: "@medusajs/index",
     disable: process.env.ENABLE_INDEX_MODULE !== "true",
   },
+  [Modules.SEARCH]: {
+    resolve: "@medusajs/search",
+    disable: process.env.ENABLE_SEARCH_MODULE !== "true",
+    options: {
+      providers: [
+        {
+          resolve: "@medusajs/search-local",
+          id: "local",
+        },
+      ],
+      // Passed in rather than discovered: this app has no `search/` folder, and
+      // the module takes one input either way.
+      indexes: require("./dist/fixtures/search").default,
+    },
+  },
   [Modules.RBAC]: {
     resolve: "@medusajs/rbac",
     disable: process.env.MEDUSA_FF_RBAC !== "true",
+  },
+  [Modules.AUTH]: {
+    options: {
+      mfa: {
+        encryption_key: "test-mfa-encryption-key",
+      },
+      providers: [
+        {
+          resolve: "@medusajs/medusa/auth-emailpass",
+          id: "emailpass",
+        },
+      ],
+    },
   },
 }
 

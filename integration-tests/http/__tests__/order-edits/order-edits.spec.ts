@@ -4,6 +4,7 @@ import {
   ContainerRegistrationKeys,
   Modules,
   OrderChangeStatus,
+  OrderEditWorkflowEvents,
   ProductStatus,
   PromotionStatus,
   PromotionType,
@@ -20,7 +21,7 @@ import { medusaTshirtProduct } from "../../__fixtures__/product"
 jest.setTimeout(300000)
 
 medusaIntegrationTestRunner({
-  testSuite: ({ dbConnection, getContainer, api }) => {
+  testSuite: ({ dbConnection, getContainer, api, dbUtils }) => {
     let order
     let taxLine
     let shippingOption
@@ -38,7 +39,7 @@ medusaIntegrationTestRunner({
 
     const shippingProviderId = "manual_test-provider"
 
-    beforeEach(async () => {
+    beforeAll(async () => {
       container = getContainer()
       await createAdminUser(dbConnection, adminHeaders, container)
 
@@ -371,6 +372,8 @@ medusaIntegrationTestRunner({
           adminHeaders
         )
       ).data.shipping_option
+
+      await dbUtils.snapshot()
     })
 
     describe("Order Edits lifecycle", () => {
@@ -578,6 +581,7 @@ medusaIntegrationTestRunner({
       let inventoryItemLarge
       let inventoryItemMedium
       let inventoryItemSmall
+      let inventoryOrder
 
       beforeEach(async () => {
         const container = getContainer()
@@ -787,7 +791,7 @@ medusaIntegrationTestRunner({
 
         const orderModule = container.resolve(Modules.ORDER)
 
-        order = await orderModule.createOrders({
+        inventoryOrder = await orderModule.createOrders({
           region_id: region.id,
           email: "foo@bar.com",
           items: [
@@ -864,14 +868,14 @@ medusaIntegrationTestRunner({
         let edit = (
           await api.post(
             `/admin/order-edits`,
-            { order_id: order.id },
+            { order_id: inventoryOrder.id },
             adminHeaders
           )
         ).data.order_change
 
         // Add item
         await api.post(
-          `/admin/order-edits/${order.id}/items`,
+          `/admin/order-edits/${inventoryOrder.id}/items`,
           {
             items: [
               {
@@ -886,7 +890,8 @@ medusaIntegrationTestRunner({
 
         // Remove item
         await api.post(
-          `/admin/order-edits/${order.id}/items/item/${order.items.find((i) => i.subtitle === "M shirt").id
+          `/admin/order-edits/${inventoryOrder.id}/items/item/${
+            inventoryOrder.items.find((i) => i.subtitle === "M shirt").id
           }`,
           { quantity: 0 },
           adminHeaders
@@ -894,7 +899,8 @@ medusaIntegrationTestRunner({
 
         // Update item
         await api.post(
-          `/admin/order-edits/${order.id}/items/item/${order.items.find((i) => i.subtitle === "L shirt").id
+          `/admin/order-edits/${inventoryOrder.id}/items/item/${
+            inventoryOrder.items.find((i) => i.subtitle === "L shirt").id
           }`,
           { quantity: 2 },
           adminHeaders
@@ -902,7 +908,7 @@ medusaIntegrationTestRunner({
 
         edit = (
           await api.post(
-            `/admin/order-edits/${order.id}/request`,
+            `/admin/order-edits/${inventoryOrder.id}/request`,
             {},
             adminHeaders
           )
@@ -910,17 +916,18 @@ medusaIntegrationTestRunner({
 
         edit = (
           await api.post(
-            `/admin/order-edits/${order.id}/confirm`,
+            `/admin/order-edits/${inventoryOrder.id}/confirm`,
             {},
             adminHeaders
           )
         ).data.order_change
 
-        order = (await api.get(`/admin/orders/${order.id}`, adminHeaders)).data
-          .order
+        inventoryOrder = (
+          await api.get(`/admin/orders/${inventoryOrder.id}`, adminHeaders)
+        ).data.order
 
-        expect(order.items.length).toBe(2)
-        expect(order.items).toEqual(
+        expect(inventoryOrder.items.length).toBe(2)
+        expect(inventoryOrder.items).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
               subtitle: "L shirt",
@@ -954,14 +961,14 @@ medusaIntegrationTestRunner({
         let edit = (
           await api.post(
             `/admin/order-edits`,
-            { order_id: order.id },
+            { order_id: inventoryOrder.id },
             adminHeaders
           )
         ).data.order_change
 
         // Add item
         await api.post(
-          `/admin/order-edits/${order.id}/items`,
+          `/admin/order-edits/${inventoryOrder.id}/items`,
           {
             items: [
               {
@@ -976,7 +983,7 @@ medusaIntegrationTestRunner({
 
         edit = (
           await api.post(
-            `/admin/order-edits/${order.id}/request`,
+            `/admin/order-edits/${inventoryOrder.id}/request`,
             {},
             adminHeaders
           )
@@ -984,17 +991,18 @@ medusaIntegrationTestRunner({
 
         edit = (
           await api.post(
-            `/admin/order-edits/${order.id}/confirm`,
+            `/admin/order-edits/${inventoryOrder.id}/confirm`,
             {},
             adminHeaders
           )
         ).data.order_change
 
-        order = (await api.get(`/admin/orders/${order.id}`, adminHeaders)).data
-          .order
+        inventoryOrder = (
+          await api.get(`/admin/orders/${inventoryOrder.id}`, adminHeaders)
+        ).data.order
 
-        expect(order.items.length).toBe(3)
-        expect(order.items).toEqual(
+        expect(inventoryOrder.items.length).toBe(3)
+        expect(inventoryOrder.items).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
               subtitle: "L shirt",
@@ -1074,6 +1082,81 @@ medusaIntegrationTestRunner({
         expect(orderChangesResult.data.order_changes.length).toEqual(1)
         expect(orderChangesResult.data.order_changes[0].status).toEqual(
           OrderChangeStatus.CONFIRMED
+        )
+      })
+
+      it("should store no_notification on the order change and pass it to the order edit events", async () => {
+        const eventBus = container.resolve(Modules.EVENT_BUS)
+        const requestedSubscriber = jest.fn()
+        const confirmedSubscriber = jest.fn()
+
+        eventBus.subscribe(
+          OrderEditWorkflowEvents.REQUESTED,
+          requestedSubscriber
+        )
+        eventBus.subscribe(
+          OrderEditWorkflowEvents.CONFIRMED,
+          confirmedSubscriber
+        )
+
+        const orderId = order.id
+
+        await api.post(
+          "/admin/order-edits",
+          { order_id: orderId, description: "Test" },
+          adminHeaders
+        )
+
+        await api.post(
+          `/admin/order-edits/${orderId}/shipping-method`,
+          { shipping_option_id: shippingOption.id, custom_amount: 5 },
+          adminHeaders
+        )
+
+        const requestResult = await api.post(
+          `/admin/order-edits/${orderId}/request`,
+          { no_notification: true },
+          adminHeaders
+        )
+
+        expect(requestResult.data.order_preview.order_change).toEqual(
+          expect.objectContaining({ no_notification: true })
+        )
+
+        await api.post(
+          `/admin/order-edits/${orderId}/confirm`,
+          {},
+          adminHeaders
+        )
+
+        const orderChangesResult = await api.get(
+          `/admin/orders/${orderId}/changes?change_type=edit`,
+          adminHeaders
+        )
+
+        expect(orderChangesResult.data.order_changes[0]).toEqual(
+          expect.objectContaining({ no_notification: true })
+        )
+
+        await new Promise((resolve) => setTimeout(resolve, 100))
+
+        expect(requestedSubscriber.mock.calls[0][0].data).toMatchObject({
+          order_id: orderId,
+          no_notification: true,
+        })
+
+        expect(confirmedSubscriber.mock.calls[0][0].data).toMatchObject({
+          order_id: orderId,
+          no_notification: true,
+        })
+
+        eventBus.unsubscribe(
+          OrderEditWorkflowEvents.REQUESTED,
+          requestedSubscriber
+        )
+        eventBus.unsubscribe(
+          OrderEditWorkflowEvents.CONFIRMED,
+          confirmedSubscriber
         )
       })
     })

@@ -3,6 +3,7 @@ import {
   createCartCreditLinesWorkflow,
   updateCartsStep,
   updateCartPromotionsWorkflow,
+  createProductsWorkflow,
 } from "@medusajs/core-flows"
 import { medusaIntegrationTestRunner } from "@medusajs/test-utils"
 import {
@@ -46,7 +47,7 @@ const shippingAddressData = {
 
 medusaIntegrationTestRunner({
   env,
-  testSuite: ({ dbConnection, getContainer, api }) => {
+  testSuite: ({ dbConnection, getContainer, api, dbUtils }) => {
     let appContainer
 
     beforeAll(async () => {
@@ -56,17 +57,17 @@ medusaIntegrationTestRunner({
     describe("Store Carts API", () => {
       let storeHeaders
       let storeHeadersWithCustomer
-      let region,
-        noAutomaticRegion,
-        product,
-        salesChannel,
-        cart,
-        customer,
-        promotion,
-        shippingProfile,
-        taxSeedData
+      let region
+      let noAutomaticRegion
+      let product
+      let salesChannel
+      let cart
+      let customer
+      let promotion
+      let shippingProfile
+      let taxSeedData
 
-      beforeEach(async () => {
+      beforeAll(async () => {
         await createAdminUser(dbConnection, adminHeaders, appContainer)
         const publishableKey = await generatePublishableKey(appContainer)
         storeHeaders = generateStoreHeaders({ publishableKey })
@@ -163,6 +164,8 @@ medusaIntegrationTestRunner({
             adminHeaders
           )
         ).data.promotion
+
+        await dbUtils.snapshot()
       })
 
       describe("GET /store/carts/[id]", () => {
@@ -524,7 +527,9 @@ medusaIntegrationTestRunner({
       })
 
       describe("POST /store/carts/:id/line-items", () => {
-        let shippingOption, shippingOptionExpensive, stockLocation
+        let shippingOption
+        let shippingOptionExpensive
+        let stockLocation
 
         beforeEach(async () => {
           stockLocation = (
@@ -668,7 +673,7 @@ medusaIntegrationTestRunner({
         })
 
         it("should add item to cart", async () => {
-          let response = await api.post(
+          const response = await api.post(
             `/store/carts/${cart.id}/line-items`,
             {
               variant_id: product.variants[0].id,
@@ -707,6 +712,56 @@ medusaIntegrationTestRunner({
                 }),
               ]),
             })
+          )
+        })
+
+        it("should return a 400 instead of a 500 when adding a variant with no price", async () => {
+          const productData = {
+            title: "Medusa T-Shirt with no price",
+            handle: "t-shirt-with-no-price",
+            status: ProductStatus.PUBLISHED,
+            options: [
+              {
+                title: "Size",
+                values: ["S"],
+              },
+            ],
+            variants: [
+              {
+                title: "S",
+                sku: "SHIRT-S-BLACK-NO-PRICE",
+                options: {
+                  Size: "S",
+                },
+                manage_inventory: false,
+              },
+            ],
+          }
+
+          const {
+            result: [newProduct],
+          } = await createProductsWorkflow(appContainer).run({
+            input: {
+              products: [productData],
+            },
+          })
+
+          const variantId = newProduct.variants[0].id
+
+          const error = await api
+            .post(
+              `/store/carts/${cart.id}/line-items`,
+              {
+                variant_id: variantId,
+                quantity: 1,
+              },
+              storeHeaders
+            )
+            .catch((e) => e)
+
+          expect(error.response.status).toEqual(400)
+          expect(error.response.data.message).toEqual(
+            `Variants with IDs ${variantId} do not have a price`
           )
         })
 
@@ -830,8 +885,10 @@ medusaIntegrationTestRunner({
                   tax_lines: [
                     {
                       code: "CADEFAULT",
+                      data: null,
                       description: "CA Default Rate",
                       id: expect.any(String),
+                      metadata: null,
                       provider_id: "system",
                       rate: 5,
                     },
@@ -952,8 +1009,10 @@ medusaIntegrationTestRunner({
                   tax_lines: [
                     {
                       code: "CADEFAULT",
+                      data: null,
                       description: "CA Default Rate",
                       id: expect.any(String),
+                      metadata: null,
                       provider_id: "system",
                       rate: 5,
                     },
@@ -1178,7 +1237,7 @@ medusaIntegrationTestRunner({
         })
 
         it("should remove promotions when promotion is no longer in active state", async () => {
-          let responseBeforePromotionUpdate = await api.post(
+          const responseBeforePromotionUpdate = await api.post(
             `/store/carts/${cart.id}/line-items`,
             {
               variant_id: product.variants[0].id,
@@ -1211,7 +1270,7 @@ medusaIntegrationTestRunner({
             adminHeaders
           )
 
-          let responseAfterPromotionUpdate = await api.post(
+          const responseAfterPromotionUpdate = await api.post(
             `/store/carts/${cart.id}/line-items`,
             {
               variant_id: product.variants[0].id,
@@ -1370,7 +1429,7 @@ medusaIntegrationTestRunner({
               storeHeaders
             )
 
-            let cartAfterExpensiveShipping = (
+            const cartAfterExpensiveShipping = (
               await api.post(
                 `/store/carts/${cart.id}/shipping-methods`,
                 { option_id: shippingOptionExpensive.id },
@@ -1816,7 +1875,7 @@ medusaIntegrationTestRunner({
           })
 
           it("should add price from price list and set compare_at_unit_price", async () => {
-            let response = await api.post(
+            const response = await api.post(
               `/store/carts/${cart.id}/line-items`,
               {
                 variant_id: product.variants[0].id,
@@ -1881,7 +1940,7 @@ medusaIntegrationTestRunner({
               })
             )
 
-            let response = await api.post(
+            const response = await api.post(
               `/store/carts/${cart.id}/line-items`,
               {
                 variant_id: product.variants[0].id,
@@ -1903,6 +1962,147 @@ medusaIntegrationTestRunner({
                     quantity: 2,
                   }),
                 ]),
+              })
+            )
+          })
+        })
+
+        describe("with quantity based sale price lists", () => {
+          let tieredVariantId
+          let tieredCart
+
+          beforeEach(async () => {
+            const tieredProduct = (
+              await api.post(
+                `/admin/products`,
+                {
+                  title: "Medusa T-Shirt with tiered sale prices",
+                  handle: "t-shirt-with-tiered-sale-prices",
+                  status: ProductStatus.PUBLISHED,
+                  options: [{ title: "Size", values: ["S"] }],
+                  variants: [
+                    {
+                      title: "S",
+                      sku: "SHIRT-S-BLACK-w-tiered-sale-prices",
+                      options: { Size: "S" },
+                      manage_inventory: false,
+                      prices: [{ amount: 4000, currency_code: "usd" }],
+                    },
+                  ],
+                },
+                adminHeaders
+              )
+            ).data.product
+
+            tieredVariantId = tieredProduct.variants[0].id
+
+            await api.post(
+              `/admin/price-lists`,
+              {
+                title: "tiered sale price list",
+                description: "test",
+                status: PriceListStatus.ACTIVE,
+                type: PriceListType.SALE,
+                prices: [
+                  {
+                    amount: 3799,
+                    currency_code: "usd",
+                    variant_id: tieredVariantId,
+                    min_quantity: 3,
+                    max_quantity: 4,
+                  },
+                  {
+                    amount: 3599,
+                    currency_code: "usd",
+                    variant_id: tieredVariantId,
+                    min_quantity: 5,
+                  },
+                ],
+              },
+              adminHeaders
+            )
+
+            tieredCart = (
+              await api.post(
+                `/store/carts`,
+                {
+                  currency_code: "usd",
+                  sales_channel_id: salesChannel.id,
+                  region_id: region.id,
+                  shipping_address: shippingAddressData,
+                },
+                storeHeaders
+              )
+            ).data.cart
+          })
+
+          it("should re-calculate the price of a merged line item based on the resulting quantity", async () => {
+            let response
+
+            for (let i = 0; i < 3; i++) {
+              response = await api.post(
+                `/store/carts/${tieredCart.id}/line-items`,
+                {
+                  variant_id: tieredVariantId,
+                  quantity: 1,
+                },
+                storeHeaders
+              )
+
+              expect(response.status).toEqual(200)
+            }
+
+            expect(response.data.cart.items).toHaveLength(1)
+            expect(response.data.cart.items[0]).toEqual(
+              expect.objectContaining({
+                variant_id: tieredVariantId,
+                quantity: 3,
+                unit_price: 3799,
+                compare_at_unit_price: 4000,
+              })
+            )
+          })
+
+          it("should set compare_at_unit_price when a line item's quantity is updated", async () => {
+            const itemId = (
+              await api.post(
+                `/store/carts/${tieredCart.id}/line-items`,
+                {
+                  variant_id: tieredVariantId,
+                  quantity: 1,
+                },
+                storeHeaders
+              )
+            ).data.cart.items[0].id
+
+            let response = await api.post(
+              `/store/carts/${tieredCart.id}/line-items/${itemId}`,
+              { quantity: 3 },
+              storeHeaders
+            )
+
+            expect(response.status).toEqual(200)
+            expect(response.data.cart.items[0]).toEqual(
+              expect.objectContaining({
+                quantity: 3,
+                unit_price: 3799,
+                compare_at_unit_price: 4000,
+              })
+            )
+
+            // Dropping back below the first tier resets the compare-at price
+            response = await api.post(
+              `/store/carts/${tieredCart.id}/line-items/${itemId}`,
+              { quantity: 1 },
+              storeHeaders
+            )
+
+            expect(response.status).toEqual(200)
+            expect(response.data.cart.items[0]).toEqual(
+              expect.objectContaining({
+                quantity: 1,
+                unit_price: 4000,
+                compare_at_unit_price: null,
               })
             )
           })
@@ -1936,7 +2136,7 @@ medusaIntegrationTestRunner({
             })
 
             it("should add item to cart even if no inventory locations", async () => {
-              let response = await api.post(
+              const response = await api.post(
                 `/store/carts/${cart.id}/line-items`,
                 {
                   variant_id: product.variants[0].id,
@@ -1955,7 +2155,7 @@ medusaIntegrationTestRunner({
                 adminHeaders
               )
 
-              let response = await api.post(
+              const response = await api.post(
                 `/store/carts/${cart.id}/line-items`,
                 {
                   variant_id: product.variants[0].id,
@@ -1971,7 +2171,8 @@ medusaIntegrationTestRunner({
       })
 
       describe("POST /store/carts/:id/line-items/:id", () => {
-        let item, customerGroup
+        let item
+        let customerGroup
 
         beforeEach(async () => {
           cart = (
@@ -2190,7 +2391,7 @@ medusaIntegrationTestRunner({
             })
 
             // Concurrently complete the cart
-            let completedCart: any[] = []
+            const completedCart: any[] = []
             for (let i = 0; i < 5; i++) {
               completedCart.push(
                 api
@@ -2201,10 +2402,10 @@ medusaIntegrationTestRunner({
               await setTimeout(25)
             }
 
-            let all = await Promise.all(completedCart)
+            const all = await Promise.all(completedCart)
 
-            let success = all.filter((res) => res.status === 200)
-            let failure = all.filter((res) => res.status !== 200)
+            const success = all.filter((res) => res.status === 200)
+            const failure = all.filter((res) => res.status !== 200)
 
             const successData = success[0].data.order
             for (const res of success) {
@@ -2835,7 +3036,10 @@ medusaIntegrationTestRunner({
           })
 
           describe("with inventory kit", () => {
-            let stockLocation, inventoryItem, product, cart
+            let stockLocation
+            let inventoryItem
+            let product
+            let cart
             beforeEach(async () => {
               stockLocation = (
                 await api.post(
@@ -3065,6 +3269,107 @@ medusaIntegrationTestRunner({
               )
             })
           })
+        })
+
+        it("should preserve tax line data field on order after cart completion", async () => {
+          const taxService = appContainer.resolve(Modules.TAX)
+          await taxService.createTaxRegions([
+            {
+              country_code: "GB",
+              provider_id: "tp_tax-data-provider_data-provider",
+              default_tax_rate: {
+                name: "GB Standard Rate",
+                rate: 20,
+                code: "GB_STD",
+              },
+            },
+          ])
+
+          const gbRegion = (
+            await api.post(
+              "/admin/regions",
+              { name: "GB Tax Data", currency_code: "gbp", countries: ["gb"] },
+              adminHeaders
+            )
+          ).data.region
+
+          const gbProduct = (
+            await api.post(
+              "/admin/products",
+              {
+                title: "GB Tax Test Product",
+                status: ProductStatus.PUBLISHED,
+                options: [{ title: "Size", values: ["S"] }],
+                variants: [
+                  {
+                    title: "S",
+                    manage_inventory: false,
+                    options: { Size: "S" },
+                    prices: [{ amount: 1000, currency_code: "gbp" }],
+                  },
+                ],
+              },
+              adminHeaders
+            )
+          ).data.product
+
+          const gbCart = (
+            await api.post(
+              "/store/carts",
+              {
+                currency_code: "gbp",
+                region_id: gbRegion.id,
+                sales_channel_id: salesChannel.id,
+                shipping_address: {
+                  address_1: "1 Oxford Street",
+                  city: "London",
+                  country_code: "GB",
+                  postal_code: "W1D 1AN",
+                },
+                items: [{ variant_id: gbProduct.variants[0].id, quantity: 1 }],
+              },
+              storeHeaders
+            )
+          ).data.cart
+
+          const paymentCollection = (
+            await api.post(
+              "/store/payment-collections",
+              { cart_id: gbCart.id },
+              storeHeaders
+            )
+          ).data.payment_collection
+
+          await api.post(
+            `/store/payment-collections/${paymentCollection.id}/payment-sessions`,
+            { provider_id: "pp_system_default" },
+            storeHeaders
+          )
+
+          const response = await api.post(
+            `/store/carts/${gbCart.id}/complete`,
+            {},
+            storeHeaders
+          )
+
+          expect(response.status).toEqual(200)
+
+          const order = (
+            await api.get(
+              `/admin/orders/${response.data.order.id}?fields=items.tax_lines.*`,
+              adminHeaders
+            )
+          ).data.order
+
+          expect(order.items[0].tax_lines).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                code: "GB_STD",
+                provider_id: "tax-data-provider",
+                data: { state_rate: 4.0, county_rate: 3.0, city_rate: 1.9 },
+              }),
+            ])
+          )
         })
 
         describe("empty cart validation", () => {
@@ -4124,7 +4429,7 @@ medusaIntegrationTestRunner({
             storeHeaders
           )
 
-          let updated = await api.post(
+          const updated = await api.post(
             `/store/carts/${cart.id}`,
             { promo_codes: [newPromotion.code] },
             storeHeaders
@@ -4188,6 +4493,243 @@ medusaIntegrationTestRunner({
           )
         })
 
+        it("should refresh tax lines when the shipping address province changes", async () => {
+          let updated = await api.post(
+            `/store/carts/${cart.id}`,
+            {},
+            storeHeaders
+          )
+
+          expect(updated.data.cart).toEqual(
+            expect.objectContaining({
+              id: cart.id,
+              items: [
+                expect.objectContaining({
+                  tax_lines: [
+                    expect.objectContaining({
+                      description: "CA Default Rate",
+                      code: "CADEFAULT",
+                      rate: 5,
+                    }),
+                  ],
+                }),
+              ],
+            })
+          )
+
+          updated = await api.post(
+            `/store/carts/${cart.id}`,
+            {
+              shipping_address: {
+                ...shippingAddressData,
+                country_code: "us",
+                province: "NY",
+              },
+            },
+            storeHeaders
+          )
+
+          expect(updated.status).toEqual(200)
+          expect(updated.data.cart).toEqual(
+            expect.objectContaining({
+              id: cart.id,
+              shipping_address: expect.objectContaining({ province: "NY" }),
+              items: [
+                expect.objectContaining({
+                  tax_lines: [
+                    expect.objectContaining({
+                      description: "NY Default Rate",
+                      code: "NYDEFAULT",
+                      rate: 6,
+                    }),
+                  ],
+                }),
+              ],
+            })
+          )
+        })
+
+        it("should refresh tax lines when a country-only shipping address is set on a multi-country region cart", async () => {
+          const euRegion = (
+            await api.post(
+              "/admin/regions",
+              {
+                name: "Europe",
+                currency_code: "eur",
+                countries: ["de", "ca"],
+              },
+              adminHeaders
+            )
+          ).data.region
+
+          // A multi-country region doesn't auto-assign a country, so the item
+          // is added before the cart has a shipping country.
+          const euCart = (
+            await api.post(
+              `/store/carts`,
+              {
+                currency_code: "eur",
+                sales_channel_id: salesChannel.id,
+                region_id: euRegion.id,
+                items: [{ variant_id: product.variants[0].id, quantity: 2 }],
+              },
+              storeHeaders
+            )
+          ).data.cart
+
+          // Without a country on the cart, items carry no tax lines.
+          expect(euCart.items).toEqual([
+            expect.objectContaining({ tax_lines: [] }),
+          ])
+
+          // Setting a country-only address (no province) must refresh taxes.
+          const updated = await api.post(
+            `/store/carts/${euCart.id}`,
+            { shipping_address: { country_code: "de" } },
+            storeHeaders
+          )
+
+          expect(updated.status).toEqual(200)
+          expect(updated.data.cart).toEqual(
+            expect.objectContaining({
+              id: euCart.id,
+              shipping_address: expect.objectContaining({ country_code: "de" }),
+              items: [
+                expect.objectContaining({
+                  tax_lines: [
+                    expect.objectContaining({
+                      description: "Germany Default Rate",
+                      code: "DE19",
+                      rate: 19,
+                    }),
+                  ],
+                }),
+              ],
+            })
+          )
+        })
+
+        it("should refresh tax lines when the shipping country changes within a multi-country region", async () => {
+          const euRegion = (
+            await api.post(
+              "/admin/regions",
+              {
+                name: "Europe",
+                currency_code: "eur",
+                countries: ["de", "ca"],
+              },
+              adminHeaders
+            )
+          ).data.region
+
+          const euCart = (
+            await api.post(
+              `/store/carts`,
+              {
+                currency_code: "eur",
+                sales_channel_id: salesChannel.id,
+                region_id: euRegion.id,
+                items: [{ variant_id: product.variants[0].id, quantity: 2 }],
+                shipping_address: { country_code: "de" },
+              },
+              storeHeaders
+            )
+          ).data.cart
+
+          expect(euCart.items).toEqual([
+            expect.objectContaining({
+              tax_lines: [
+                expect.objectContaining({
+                  code: "DE19",
+                  rate: 19,
+                }),
+              ],
+            }),
+          ])
+
+          // Switching the country (still no province) must re-tax at the new
+          // country's rate.
+          const updated = await api.post(
+            `/store/carts/${euCart.id}`,
+            { shipping_address: { country_code: "ca" } },
+            storeHeaders
+          )
+
+          expect(updated.status).toEqual(200)
+          expect(updated.data.cart).toEqual(
+            expect.objectContaining({
+              id: euCart.id,
+              shipping_address: expect.objectContaining({ country_code: "ca" }),
+              items: [
+                expect.objectContaining({
+                  tax_lines: [
+                    expect.objectContaining({
+                      description: "Canada Default Rate",
+                      code: "CA_DEF",
+                      rate: 5,
+                    }),
+                  ],
+                }),
+              ],
+            })
+          )
+        })
+
+        it("should refresh tax lines when the shipping address is switched to a different address id", async () => {
+          // cart (beforeEach) has a US/CA address (CA Default Rate). Create a
+          // second cart with a US/NY address to obtain a different,
+          // tax-different address id.
+          const otherCart = (
+            await api.post(
+              `/store/carts`,
+              {
+                currency_code: "usd",
+                sales_channel_id: salesChannel.id,
+                region_id: region.id,
+                shipping_address: {
+                  ...shippingAddressData,
+                  country_code: "us",
+                  province: "NY",
+                },
+                items: [{ variant_id: product.variants[0].id, quantity: 1 }],
+              },
+              storeHeaders
+            )
+          ).data.cart
+
+          // Switch the cart to the other address by id alone (the payload
+          // carries no tax-relevant fields), so only the changed address id can
+          // trigger the refresh. The referenced address is in a different tax
+          // region (NY), so tax lines must be recalculated.
+          const updated = await api.post(
+            `/store/carts/${cart.id}`,
+            { shipping_address: { id: otherCart.shipping_address.id } },
+            storeHeaders
+          )
+
+          expect(updated.status).toEqual(200)
+          expect(updated.data.cart).toEqual(
+            expect.objectContaining({
+              id: cart.id,
+              shipping_address: expect.objectContaining({
+                id: otherCart.shipping_address.id,
+                province: "NY",
+              }),
+              items: [
+                expect.objectContaining({
+                  tax_lines: [
+                    expect.objectContaining({
+                      description: "NY Default Rate",
+                      code: "NYDEFAULT",
+                      rate: 6,
+                    }),
+                  ],
+                }),
+              ],
+            })
+          )
+        })
+
         it("should not generate tax lines for gift card products", async () => {
           const giftCardProduct = (
             await api.post(
@@ -4224,12 +4766,11 @@ medusaIntegrationTestRunner({
             )
           ).data.product
 
-          let updated = await api.post(
-            `/store/carts/${cart.id}/line-items?fields=+items.is_giftcard`,
+          const updated = await api.post(
+            `/store/carts/${cart.id}/line-items`,
             { variant_id: giftCardProduct.variants[0].id, quantity: 1 },
             storeHeaders
           )
-
           expect(updated.status).toEqual(200)
           expect(updated.data.cart).toEqual(
             expect.objectContaining({
@@ -4339,7 +4880,7 @@ medusaIntegrationTestRunner({
             )
           ).data.sales_channel
 
-          let updated = await api.post(
+          const updated = await api.post(
             `/store/carts/${cart.id}`,
             {
               region_id: noAutomaticRegion.id,
@@ -4367,7 +4908,7 @@ medusaIntegrationTestRunner({
         })
 
         it("should update tax lines on cart items when region changes", async () => {
-          let response = await api.post(
+          const response = await api.post(
             `/store/carts/${cart.id}`,
             {
               region_id: otherRegion.id,
@@ -4487,7 +5028,7 @@ medusaIntegrationTestRunner({
         })
 
         it("should throw when updating shipping address country code when country is not within region", async () => {
-          let errResponse = await api
+          const errResponse = await api
             .post(
               `/store/carts/${cart.id}`,
               {
@@ -4506,7 +5047,7 @@ medusaIntegrationTestRunner({
         })
 
         it("should throw when updating region and shipping address, but shipping address country code is not within region", async () => {
-          let errResponse = await api
+          const errResponse = await api
             .post(
               `/store/carts/${cart.id}`,
               {
@@ -4759,7 +5300,7 @@ medusaIntegrationTestRunner({
             storeHeaders
           )
 
-          let updated = await api.post(
+          const updated = await api.post(
             `/store/carts/${cart.id}`,
             { region_id: region.id },
             storeHeaders
@@ -4934,7 +5475,7 @@ medusaIntegrationTestRunner({
           })
 
           it("should remove promotion adjustments when promotion is deleted", async () => {
-            let cartBeforeRemovingPromotion = (
+            const cartBeforeRemovingPromotion = (
               await api.get(`/store/carts/${cart.id}`, storeHeaders)
             ).data.cart
 
@@ -4958,7 +5499,7 @@ medusaIntegrationTestRunner({
 
             await api.delete(`/admin/promotions/${promotion.id}`, adminHeaders)
 
-            let response = await api.post(
+            const response = await api.post(
               `/store/carts/${cart.id}`,
               {
                 email: "test@test.com",
@@ -4987,7 +5528,7 @@ medusaIntegrationTestRunner({
                   code: "PROMOTION_TAX_EXCLUSIVE",
                   type: PromotionType.STANDARD,
                   status: PromotionStatus.ACTIVE,
-                  is_tax_inclusive: false, //Here we apply a tax exclusive promotion to a tax inclusive item in a way that the total SHOULD be 0
+                  is_tax_inclusive: false, // Here we apply a tax exclusive promotion to a tax inclusive item in a way that the total SHOULD be 0
                   application_method: {
                     type: "fixed",
                     target_type: "items",
@@ -5059,7 +5600,7 @@ medusaIntegrationTestRunner({
               )
             ).data.cart
 
-            let updated = await api.post(
+            const updated = await api.post(
               `/store/carts/${cart.id}`,
               { promo_codes: [taxExclPromotion.code] },
               storeHeaders
@@ -5104,7 +5645,7 @@ medusaIntegrationTestRunner({
                   code: "PROMOTION_TAX_INCLUSIVE",
                   type: PromotionType.STANDARD,
                   status: PromotionStatus.ACTIVE,
-                  is_tax_inclusive: true, //Here we apply a tax inclusive promotion to a tax inclusive item in a way that the total SHOULD be 0
+                  is_tax_inclusive: true, // Here we apply a tax inclusive promotion to a tax inclusive item in a way that the total SHOULD be 0
                   application_method: {
                     type: "fixed",
                     target_type: "items",
@@ -5176,7 +5717,7 @@ medusaIntegrationTestRunner({
               )
             ).data.cart
 
-            let updated = await api.post(
+            const updated = await api.post(
               `/store/carts/${cart.id}`,
               { promo_codes: [taxInclPromotion.code] },
               storeHeaders
@@ -5223,7 +5764,7 @@ medusaIntegrationTestRunner({
                   code: "PROMOTION_TAX_INCLUSIVE",
                   type: PromotionType.STANDARD,
                   status: PromotionStatus.ACTIVE,
-                  is_tax_inclusive: true, //Here we apply a tax inclusive promotion to a tax inclusive item in a way that the total SHOULD be 0
+                  is_tax_inclusive: true, // Here we apply a tax inclusive promotion to a tax inclusive item in a way that the total SHOULD be 0
                   application_method: {
                     type: "fixed",
                     target_type: "items",
@@ -5295,7 +5836,7 @@ medusaIntegrationTestRunner({
               )
             ).data.cart
 
-            let updated = await api.post(
+            const updated = await api.post(
               `/store/carts/${cart.id}`,
               { promo_codes: [taxInclPromotion.code] },
               storeHeaders
@@ -5342,7 +5883,7 @@ medusaIntegrationTestRunner({
                   code: "PROMOTION_TAX_INCLUSIVE",
                   type: PromotionType.STANDARD,
                   status: PromotionStatus.ACTIVE,
-                  is_tax_inclusive: true, //Here we apply a tax inclusive promotion to a tax inclusive item in a way that the total SHOULD be 0
+                  is_tax_inclusive: true, // Here we apply a tax inclusive promotion to a tax inclusive item in a way that the total SHOULD be 0
                   application_method: {
                     type: "fixed",
                     target_type: "items",
@@ -5414,7 +5955,7 @@ medusaIntegrationTestRunner({
               )
             ).data.cart
 
-            let updated = await api.post(
+            const updated = await api.post(
               `/store/carts/${cart.id}`,
               { promo_codes: [taxInclPromotion.code] },
               storeHeaders
@@ -5552,7 +6093,7 @@ medusaIntegrationTestRunner({
               )
             ).data.cart
 
-            let updated = await api.post(
+            const updated = await api.post(
               `/store/carts/${cart.id}`,
               {
                 promo_codes: [
@@ -5669,7 +6210,7 @@ medusaIntegrationTestRunner({
               )
             ).data.cart
 
-            let updated = await api.post(
+            const updated = await api.post(
               `/store/carts/${cart.id}`,
               {
                 promo_codes: [taxInclPromotion.code],
@@ -5698,7 +6239,7 @@ medusaIntegrationTestRunner({
               })
             )
 
-            let updatedAgain = await api.post(
+            const updatedAgain = await api.post(
               `/store/carts/${cart.id}`,
               {
                 promo_codes: [taxInclPromotion.code],
@@ -5736,7 +6277,7 @@ medusaIntegrationTestRunner({
                   code: "PROMOTION_TAX_INCLUSIVE",
                   type: PromotionType.STANDARD,
                   status: PromotionStatus.ACTIVE,
-                  is_tax_inclusive: true, //Here we apply a tax inclusive promotion to a tax inclusive item in a way that the total SHOULD be 0
+                  is_tax_inclusive: true, // Here we apply a tax inclusive promotion to a tax inclusive item in a way that the total SHOULD be 0
                   application_method: {
                     type: "fixed",
                     target_type: "items",
@@ -5807,7 +6348,7 @@ medusaIntegrationTestRunner({
               )
             ).data.cart
 
-            let updated = await api.post(
+            const updated = await api.post(
               `/store/carts/${cart.id}`,
               { promo_codes: [taxInclPromotion.code] },
               storeHeaders
@@ -5986,7 +6527,7 @@ medusaIntegrationTestRunner({
                 )
               ).data.cart
 
-              let updated = await api.post(
+              const updated = await api.post(
                 `/store/carts/${cart.id}`,
                 {
                   promo_codes: [percentagePromotion.code],
@@ -6049,7 +6590,7 @@ medusaIntegrationTestRunner({
                 )
               ).data.cart
 
-              let updated = await api.post(
+              const updated = await api.post(
                 `/store/carts/${cart.id}`,
                 {
                   promo_codes: [percentagePromotion.code],
@@ -7029,7 +7570,7 @@ medusaIntegrationTestRunner({
         })
 
         it("should add shipping method with tax rate override to cart", async () => {
-          let taxRegion = (
+          const taxRegion = (
             await api.get(`/admin/tax-regions?country_code=us`, adminHeaders)
           ).data.tax_regions[0]
 
@@ -7053,7 +7594,7 @@ medusaIntegrationTestRunner({
             adminHeaders
           )
 
-          let response = await api.post(
+          const response = await api.post(
             `/store/carts/${cart.id}/shipping-methods`,
             { option_id: shippingOption.id },
             storeHeaders
@@ -7097,7 +7638,7 @@ medusaIntegrationTestRunner({
             )
           ).data.cart
 
-          let { response } = await api
+          const { response } = await api
             .post(
               `/store/carts/${cart.id}/shipping-methods`,
               { option_id: shippingOption.id },
@@ -7112,7 +7653,7 @@ medusaIntegrationTestRunner({
         })
 
         it("should throw when shipping option id is not found", async () => {
-          let { response } = await api
+          const { response } = await api
             .post(
               `/store/carts/${cart.id}/shipping-methods`,
               { option_id: "does-not-exist" },

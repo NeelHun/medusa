@@ -4,8 +4,20 @@ export const auth = [
     "path": "https://docs.medusajs.com/resources/commerce-modules/auth/create-actor-type"
   },
   {
+    "title": "Link Auth Provider to Existing Actor",
+    "path": "https://docs.medusajs.com/resources/commerce-modules/auth/link-provider-identity"
+  },
+  {
     "title": "Reset Password",
     "path": "https://docs.medusajs.com/user-guide/reset-password"
+  },
+  {
+    "title": "Restrict Order Retrieval",
+    "path": "https://docs.medusajs.com/resources/commerce-modules/order/secure-order-retrieval"
+  },
+  {
+    "title": "Restrict Return Creation",
+    "path": "https://docs.medusajs.com/resources/commerce-modules/order/secure-return-creation"
   },
   {
     "title": "How to Add Custom Authentication in Medusa Admin",
@@ -52,12 +64,20 @@ export const auth = [
     "path": "https://docs.medusajs.com/resources/references/auth/provider"
   },
   {
+    "title": "createPasswordResetTokenStep",
+    "path": "https://docs.medusajs.com/resources/references/medusa-workflows/steps/createPasswordResetTokenStep"
+  },
+  {
     "title": "requestVerificationStep",
     "path": "https://docs.medusajs.com/resources/references/medusa-workflows/steps/requestVerificationStep"
   },
   {
     "title": "setAuthAppMetadataStep",
     "path": "https://docs.medusajs.com/resources/references/medusa-workflows/steps/setAuthAppMetadataStep"
+  },
+  {
+    "title": "generateResetPasswordTokenWorkflow",
+    "path": "https://docs.medusajs.com/resources/references/medusa-workflows/generateResetPasswordTokenWorkflow"
   },
   {
     "title": "requestVerificationWorkflow",
@@ -104,11 +124,23 @@ export const auth = [
     "path": "https://docs.medusajs.com/resources/references/js-sdk/auth/refresh"
   },
   {
+    "title": "register",
+    "path": "https://docs.medusajs.com/resources/references/js-sdk/auth/register"
+  },
+  {
     "title": "resetPassword",
     "path": "https://docs.medusajs.com/resources/references/js-sdk/auth/resetPassword"
   },
   {
     "title": "updateProvider",
     "path": "https://docs.medusajs.com/resources/references/js-sdk/auth/updateProvider"
+  },
+  {
+    "title": "Create MFA Provider",
+    "path": "https://docs.medusajs.com/resources/references/auth/mfa-module-provider"
+  },
+  {
+    "title": "Create Recovery Code MFA Provider",
+    "path": "https://docs.medusajs.com/resources/references/auth/recovery-code-mfa-module-provider"
   }
 ]
