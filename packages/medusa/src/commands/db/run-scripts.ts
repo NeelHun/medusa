@@ -12,6 +12,7 @@ import { dirname, join } from "path"
 import { MedusaModule } from "@medusajs/framework/modules-sdk"
 import { Logger, MedusaContainer, PluginDetails } from "@medusajs/types"
 import { initializeContainer } from "../../loaders"
+import { loadSearchIndexes } from "../../loaders/search"
 import { ensureDbExists } from "../utils"
 
 const TERMINAL_SIZE = process.stdout.columns
@@ -106,6 +107,14 @@ async function loadResources(
   )
   await new LinkLoader(linksSourcePaths, logger).load()
 
+  // Cleared along with the module instances above, and the boot below seeds
+  // through `onApplicationStart`,.
+  await loadSearchIndexes({
+    plugins,
+    configModule: container.resolve(ContainerRegistrationKeys.CONFIG_MODULE),
+    logger,
+  })
+
   // Pass the existing container so that registrations (e.g. ContainerRegistrationKeys.QUERY)
   // are made on the same container that migration scripts will resolve from.
   // Without this, `useQueryGraphStep` fails with AwilixResolutionError because
@@ -139,10 +148,12 @@ const main = async function ({
   container?: MedusaContainer
 }) {
   process.env.MEDUSA_WORKER_MODE = "server"
-  const container = await initializeContainer(directory)
-  const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
+  let logger: Logger | undefined
 
   try {
+    const container = await initializeContainer(directory)
+    logger = container.resolve(ContainerRegistrationKeys.LOGGER)
+
     const migrated = await runMigrationScripts({
       directory,
       container: container,
@@ -150,7 +161,11 @@ const main = async function ({
     })
     process.exit(migrated ? 0 : 1)
   } catch (error) {
-    logger.error(error)
+    if (logger) {
+      logger.error(error as string | Error)
+    } else {
+      console.error(error)
+    }
     process.exit(1)
   }
 }

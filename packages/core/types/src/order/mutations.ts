@@ -445,6 +445,16 @@ export interface CreateOrderTaxLineDTO {
    * The associated provider's ID.
    */
   provider_id?: string
+
+  /**
+   * Holds custom data in key-value pairs.
+   */
+  metadata?: Record<string, unknown> | null
+
+  /**
+   * Holds data returned by the tax provider in key-value pairs.
+   */
+  data?: Record<string, unknown> | null
 }
 
 /**
@@ -480,6 +490,16 @@ export interface UpdateOrderTaxLineDTO {
    * The associated provider's ID.
    */
   provider_id?: string
+
+  /**
+   * Holds custom data in key-value pairs.
+   */
+  metadata?: Record<string, unknown> | null
+
+  /**
+   * Holds data returned by the tax provider in key-value pairs.
+   */
+  data?: Record<string, unknown> | null
 }
 
 /**
@@ -931,6 +951,11 @@ export interface CreateOrderChangeDTO {
   carry_over_promotions?: boolean | null
 
   /**
+   * Whether the customer shouldn't be notified of the order change.
+   */
+  no_notification?: boolean | null
+
+  /**
    * The user or customer that requested the order change.
    */
   requested_by?: string
@@ -1043,6 +1068,11 @@ export interface UpdateOrderChangeDTO {
    * Whether to carry over promotions to outbound exchange items.
    */
   carry_over_promotions?: boolean | null
+
+  /**
+   * Whether the customer shouldn't be notified of the order change.
+   */
+  no_notification?: boolean | null
 }
 
 /**

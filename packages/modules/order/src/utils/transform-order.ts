@@ -56,6 +56,7 @@ export function formatOrder<T = any>(
           detail.raw_compare_at_unit_price ??
           orderItem.item.raw_compare_at_unit_price,
         metadata: detail.metadata ?? orderItem.item.metadata,
+        line_item_metadata: orderItem.item.metadata,
         detail,
       }
     })
@@ -208,12 +209,6 @@ export function mapRepositoryToOrderModel(config, isRelatedEntity = false) {
 
     return deduplicate(
       obj[type].sort().map((rel) => {
-        if (rel == "items.quantity") {
-          if (type === "fields") {
-            obj.populate.push("items.item")
-          }
-          return "items.item.quantity"
-        }
         if (rel == "summary" && type === "fields") {
           obj.populate.push("summary")
           return "summary.totals"

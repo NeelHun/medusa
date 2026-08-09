@@ -10,10 +10,14 @@ import {
   ModuleExports,
   ModuleJoinerConfig,
   ModuleResolution,
+  ModuleServiceInitializeOptions,
+  SearchTypes,
 } from "@medusajs/types"
 import {
   ContainerRegistrationKeys,
   createMedusaContainer,
+  loadDatabaseConfig,
+  MedusaError,
   promiseAll,
   simpleHash,
   stringifyCircular,
@@ -103,6 +107,10 @@ class MedusaModule {
     new Map()
   private static modules_: Map<string, ModuleAlias[]> = new Map()
   private static customLinks_: RegisterModuleJoinerConfig[] = []
+  private static searchIndexes_: Map<
+    string,
+    { definition: SearchTypes.SearchIndexDefinition; filePath?: string }
+  > = new Map()
   private static loading_: Map<string, Promise<any>> = new Map()
   private static joinerConfig_: Map<string, ModuleJoinerConfig> = new Map()
   private static moduleResolutions_: Map<string, ModuleResolution> = new Map()
@@ -119,22 +127,26 @@ class MedusaModule {
     })
   }
 
-  public static onApplicationStart(onApplicationStartCb?: () => void): void {
-    for (const instances of MedusaModule.instances_.values()) {
-      for (const instance of Object.values(instances) as IModuleService[]) {
-        if (instance?.__hooks) {
-          instance.__hooks?.onApplicationStart
-            ?.bind(instance)()
-            .then(() => {
-              onApplicationStartCb?.()
-            })
-            .catch(() => {
-              // The module should handle this and log it
-              return void 0
-            })
-        }
-      }
-    }
+  public static async onApplicationStart(
+    onApplicationStartCb?: () => void
+  ): Promise<void> {
+    await promiseAll(
+      [...MedusaModule.instances_.values()]
+        .map((instances) => {
+          return Object.values(instances).map((instance: IModuleService) => {
+            return instance.__hooks?.onApplicationStart
+              ?.bind(instance)()
+              .then(() => {
+                onApplicationStartCb?.()
+              })
+              .catch(() => {
+                // The module should handle this and log it
+                return void 0
+              })
+          })
+        })
+        .flat()
+    )
   }
   public static async onApplicationShutdown(): Promise<void> {
     await promiseAll(
@@ -176,6 +188,7 @@ class MedusaModule {
     MedusaModule.joinerConfig_.clear()
     MedusaModule.moduleResolutions_.clear()
     MedusaModule.customLinks_.length = 0
+    MedusaModule.searchIndexes_.clear()
   }
 
   public static isInstalled(moduleKey: string, alias?: string): boolean {
@@ -243,6 +256,38 @@ class MedusaModule {
 
   public static getCustomLinks(): RegisterModuleJoinerConfig[] {
     return MedusaModule.customLinks_
+  }
+
+  /**
+   * Keyed by index name so that loading the same file twice registers the same index.
+   * Two different definitions with the same name (eg. in separate files)  is a real conflict, and throws.
+   */
+  public static setSearchIndex(
+    definition: SearchTypes.SearchIndexDefinition,
+    filePath?: string
+  ): void {
+    const existing = MedusaModule.searchIndexes_.get(definition.name)
+
+    // Same source re-registering (a re-boot in one process) is fine; `filePath`
+    // is undefined for both registrations of an inline definition.
+    if (existing && existing.filePath !== filePath) {
+      const describe = (path?: string) => path ?? "the Search Module's options"
+
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        `Search index "${definition.name}" is defined twice: in ${describe(
+          existing.filePath
+        )} and ${describe(filePath)}`
+      )
+    }
+
+    MedusaModule.searchIndexes_.set(definition.name, { definition, filePath })
+  }
+
+  public static getSearchIndexes(): SearchTypes.SearchIndexDefinition[] {
+    return [...MedusaModule.searchIndexes_.values()].map(
+      ({ definition }) => definition
+    )
   }
 
   public static getModuleInstance(
@@ -636,6 +681,11 @@ class MedusaModule {
           joinerConfig.primaryKeys = ["id"]
         }
 
+        joinerConfig = {
+          ...joinerConfig,
+          databaseClientUrl: resolveJoinerConfigDatabaseClientUrl(resolution),
+        }
+
         services[keyName].__joinerConfig = joinerConfig
         MedusaModule.setJoinerConfig(keyName, joinerConfig)
       }
@@ -762,6 +812,11 @@ class MedusaModule {
           throw new Error(
             `Your module is missing a joiner config: ${keyName}. If this module is not queryable, please set { definition: { isQueryable: false } } in your module configuration.`
           )
+        }
+
+        joinerConfig = {
+          ...joinerConfig,
+          databaseClientUrl: resolveJoinerConfigDatabaseClientUrl(resolution),
         }
 
         services[keyName].__joinerConfig = joinerConfig
@@ -923,6 +978,27 @@ class MedusaModule {
         })
       }
     }
+  }
+}
+
+function resolveJoinerConfigDatabaseClientUrl(
+  resolution: ModuleResolution
+): string | undefined {
+  const declaration = resolution.moduleDeclaration
+  const options =
+    declaration && typeof declaration === "object" && "options" in declaration
+      ? (declaration.options as ModuleServiceInitializeOptions | undefined)
+      : (resolution.options as ModuleServiceInitializeOptions | undefined)
+
+  if (!options) {
+    return undefined
+  }
+
+  try {
+    return loadDatabaseConfig(resolution.definition.key, options, true)
+      .clientUrl
+  } catch {
+    return undefined
   }
 }
 

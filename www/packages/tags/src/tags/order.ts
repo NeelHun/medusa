@@ -56,8 +56,20 @@ export const order = [
     "path": "https://docs.medusajs.com/user-guide/settings/return-reasons"
   },
   {
+    "title": "Reservations Lifecycle",
+    "path": "https://docs.medusajs.com/resources/commerce-modules/inventory/reservations-lifecycle"
+  },
+  {
     "title": "Retrieve Order Totals Using Query",
     "path": "https://docs.medusajs.com/resources/commerce-modules/order/order-totals"
+  },
+  {
+    "title": "Restrict Order Retrieval",
+    "path": "https://docs.medusajs.com/resources/commerce-modules/order/secure-order-retrieval"
+  },
+  {
+    "title": "Restrict Return Creation",
+    "path": "https://docs.medusajs.com/resources/commerce-modules/order/secure-return-creation"
   },
   {
     "title": "Implement Quote Management",
@@ -600,6 +612,10 @@ export const order = [
     "path": "https://docs.medusajs.com/resources/references/medusa-workflows/requestOrderTransferWorkflow"
   },
   {
+    "title": "transferOrderToGuestWorkflow",
+    "path": "https://docs.medusajs.com/resources/references/medusa-workflows/transferOrderToGuestWorkflow"
+  },
+  {
     "title": "updateClaimAddItemWorkflow",
     "path": "https://docs.medusajs.com/resources/references/medusa-workflows/updateClaimAddItemWorkflow"
   },
@@ -666,6 +682,10 @@ export const order = [
   {
     "title": "updateReturnWorkflow",
     "path": "https://docs.medusajs.com/resources/references/medusa-workflows/updateReturnWorkflow"
+  },
+  {
+    "title": "authorizePaymentSessionForOrderWorkflow",
+    "path": "https://docs.medusajs.com/resources/references/medusa-workflows/authorizePaymentSessionForOrderWorkflow"
   },
   {
     "title": "capturePaymentWorkflow",

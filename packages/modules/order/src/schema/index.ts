@@ -201,6 +201,7 @@ type OrderLineItem {
   created_at: DateTime!
   updated_at: DateTime!
   metadata: JSON
+  line_item_metadata: JSON
   original_total: Float
   original_subtotal: Float
   original_tax_total: Float
@@ -654,6 +655,7 @@ type OrderChange {
   canceled_by: String
   canceled_at: DateTime
   carry_over_promotions: Boolean
+  no_notification: Boolean
   created_at: DateTime!
   updated_at: DateTime!
 }
